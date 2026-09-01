@@ -244,7 +244,7 @@ public class VideoStreamingServer {
             if (filtered == null)    filtered    = new Mat();
 
             Imgproc.remap(src, undistorted, map1, map2, Imgproc.INTER_LINEAR,
-                    Imgproc.BORDER_CONSTANT, Scalar.all(0));
+                    Core.BORDER_CONSTANT, Scalar.all(0));
 
             Imgproc.GaussianBlur(undistorted, filtered, new Size(3, 3), 0.8);
 
