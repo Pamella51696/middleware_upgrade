@@ -17,6 +17,7 @@ import org.opencv.core.*;
 import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.videoio.VideoCapture;
+import org.opencv.videoio.Videoio;
 
 public class VideoStreamingServer {
 
@@ -76,7 +77,6 @@ public class VideoStreamingServer {
     private static class StitchHandler implements HttpHandler {
       private final Path[] videoFiles;
       StitchHandler(Path[] f) { this.videoFiles = f; }
-      private int resetCount = 0;
 
       @Override public void handle(HttpExchange ex) throws IOException {
         if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
@@ -85,8 +85,9 @@ public class VideoStreamingServer {
 
         VideoCapture[] caps = new VideoCapture[videoFiles.length];
         for (int i = 0; i < videoFiles.length; i++) {
-          caps[i] = new VideoCapture(videoFiles[i].toString());
-          if (!caps[i].isOpened()) {
+          caps[i] = openVideo(videoFiles[i]);
+          if (caps[i] == null || !caps[i].isOpened()) {
+            System.err.println("Could not open video: " + videoFiles[i]);
             ex.sendResponseHeaders(500, -1); return;
           }
         }
@@ -109,25 +110,9 @@ public class VideoStreamingServer {
 
           while (true) {
             for (int i = 0; i < caps.length; i++) {
-              boolean frameRead = caps[i].read(frames[i]);
-              if (!frameRead || frames[i].empty()) {
-                caps[i].release();
-                caps[i] = new VideoCapture(videoFiles[i].toString());
-
-                if (!caps[i].isOpened()) {
-                  System.err.println("Error: Could not reopen video " + i);
-                  continue;
-                }
-
-                frameRead = caps[i].read(frames[i]);
-                if (!frameRead || frames[i].empty()) {
-                  System.err.println("Warning: Could not read frame from video " + i + " after reopening");
-                  continue;
-                }
-                resetCount++;
-                System.out.println("Video " + i + " restarted (total resets: " + resetCount + ")");
+              if (!readOrLoop(caps, i, videoFiles[i], frames[i])) {
+                continue;
               }
-
               undistort[i].recalibrateAndFilter(frames[i], ready[i]);
             }
 
@@ -394,7 +379,104 @@ public class VideoStreamingServer {
     }
 
 
-    // SHARED HELPERS
+    // VIDEO IO  —  FFmpeg first (Windows MSMF often cannot decode .mov to RGB32)
+
+    static VideoCapture openVideo(Path path) {
+        String file = path.toString();
+
+        VideoCapture cap = tryOpen(file, Videoio.CAP_FFMPEG, "FFMPEG");
+        if (cap != null) {
+            return cap;
+        }
+
+        System.err.println("FFmpeg backend did not open " + path.getFileName()
+                + ". Add opencv_videoio_ffmpeg490_64.dll to PATH (opencv\\build\\bin), "
+                + "then retry. Falling back to other backends.");
+
+        cap = tryOpen(file, Videoio.CAP_ANY, "ANY");
+        if (cap != null) {
+            return cap;
+        }
+        cap = tryOpen(file, Videoio.CAP_MSMF, "MSMF");
+        if (cap != null) {
+            return cap;
+        }
+
+        cap = new VideoCapture(file);
+        if (cap.isOpened() && probeFrame(cap)) {
+            logBackend(file, cap, "default");
+            return cap;
+        }
+        cap.release();
+        return null;
+    }
+
+    static VideoCapture tryOpen(String file, int api, String label) {
+        VideoCapture cap = new VideoCapture();
+        try {
+            if (!cap.open(file, api) || !cap.isOpened()) {
+                cap.release();
+                return null;
+            }
+        } catch (Exception e) {
+            cap.release();
+            return null;
+        }
+
+        cap.set(Videoio.CAP_PROP_CONVERT_RGB, 1);
+        if (!probeFrame(cap)) {
+            cap.release();
+            return null;
+        }
+        logBackend(file, cap, label);
+        return cap;
+    }
+
+    /** Confirm a real frame can be decoded, then rewind so streaming starts at frame 0. */
+    static boolean probeFrame(VideoCapture cap) {
+        Mat probe = new Mat();
+        boolean ok = cap.read(probe) && !probe.empty();
+        probe.release();
+        if (!ok) {
+            return false;
+        }
+        cap.set(Videoio.CAP_PROP_POS_FRAMES, 0);
+        return true;
+    }
+
+    static void logBackend(String file, VideoCapture cap, String requested) {
+        String backend = requested;
+        try {
+            String named = cap.getBackendName();
+            if (named != null && !named.isEmpty()) {
+                backend = named;
+            }
+        } catch (Exception ignored) {
+        }
+        System.out.println("Opened " + file + " [" + backend + "]");
+    }
+
+    static boolean readOrLoop(VideoCapture[] caps, int i, Path path, Mat frame) {
+        if (caps[i].read(frame) && !frame.empty()) {
+            return true;
+        }
+
+        caps[i].set(Videoio.CAP_PROP_POS_FRAMES, 0);
+        if (caps[i].read(frame) && !frame.empty()) {
+            System.out.println("Video " + i + " looped via seek");
+            return true;
+        }
+
+        caps[i].release();
+        caps[i] = openVideo(path);
+        if (caps[i] != null && caps[i].read(frame) && !frame.empty()) {
+            System.out.println("Video " + i + " reopened after loop");
+            return true;
+        }
+
+        System.err.println("Warning: Could not read frame from video " + i);
+        return false;
+    }
 
     static byte[] encodeJpeg(Mat frame) {
         MatOfByte buf    = new MatOfByte();
