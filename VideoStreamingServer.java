@@ -30,16 +30,16 @@ public class VideoStreamingServer {
     // =========================================================================
     public static void main(String[] args) throws IOException {
 
-        Path frontVideo = preferH264(Paths.get("rear_1.mov"));
-        Path rearVideo  = preferH264(Paths.get("left_1.mov"));
-        Path sideVideo  = preferH264(Paths.get("right_1.mov"));
-        Path backVideo  = preferH264(Paths.get("front_1.mov"));
+        Path frontVideo = ensureDecodable(Paths.get("rear_1.mov"));
+        Path rearVideo  = ensureDecodable(Paths.get("left_1.mov"));
+        Path sideVideo  = ensureDecodable(Paths.get("right_1.mov"));
+        Path backVideo  = ensureDecodable(Paths.get("front_1.mov"));
 
         if (args.length >= 5) {
-            frontVideo = preferH264(Paths.get(args[1]));
-            rearVideo  = preferH264(Paths.get(args[2]));
-            sideVideo  = preferH264(Paths.get(args[3]));
-            backVideo  = preferH264(Paths.get(args[4]));
+            frontVideo = ensureDecodable(Paths.get(args[1]));
+            rearVideo  = ensureDecodable(Paths.get(args[2]));
+            sideVideo  = ensureDecodable(Paths.get(args[3]));
+            backVideo  = ensureDecodable(Paths.get(args[4]));
         }
 
         Path[] videos = { frontVideo, rearVideo, sideVideo, backVideo };
@@ -72,8 +72,6 @@ public class VideoStreamingServer {
         System.out.println("Server started  ->  http://localhost:" + port + "/play");
         System.out.println("Feeds: front=" + frontVideo + " rear=" + rearVideo
                 + " side=" + sideVideo + " back=" + backVideo);
-        System.out.println("Windows: if you see cap_msmf RGB32 'codec not found', "
-                + "transcode each .mov to H.264 .mp4 (see preferH264).");
     }
 
     // STITCH HANDLER  -  undistort each feed, then feather-blend panorama
@@ -386,9 +384,35 @@ public class VideoStreamingServer {
     // VIDEO IO  —  FFmpeg plugin, then MSMF without RGB32 conversion
 
     static Path preferH264(Path requested) {
-        if (requested == null) {
+        return ensureDecodable(requested);
+    }
+
+    /**
+     * These camera .mov files are PNG video (FFmpeg codec_id=61, fourcc png).
+     * OpenCV's bundled FFmpeg and Windows MSMF cannot decode that.
+     * Use a sibling H.264 .mp4, transcoding with ffmpeg when needed.
+     */
+    static Path ensureDecodable(Path requested) {
+        Path mp4 = siblingWithExt(requested, ".mp4");
+        if (isUsableFile(mp4)) {
+            System.out.println("Using " + mp4.getFileName() + " (H.264) instead of "
+                    + requested.getFileName());
+            return mp4;
+        }
+        if (!isUsableFile(requested)) {
             return requested;
         }
+        if (transcodeToH264(requested, mp4) && isUsableFile(mp4)) {
+            return mp4;
+        }
+        System.err.println("Cannot decode " + requested.getFileName()
+                + " (PNG-in-MOV). Install ffmpeg on PATH and re-run, or convert:");
+        System.err.println("  ffmpeg -y -i " + requested.getFileName()
+                + " -c:v libx264 -pix_fmt yuv420p -an " + mp4.getFileName());
+        return requested;
+    }
+
+    static Path siblingWithExt(Path requested, String ext) {
         String name = requested.getFileName().toString();
         int dot = name.lastIndexOf('.');
         String stem = dot >= 0 ? name.substring(0, dot) : name;
@@ -396,14 +420,44 @@ public class VideoStreamingServer {
         if (dir == null) {
             dir = Paths.get(".");
         }
-        Path mp4 = dir.resolve(stem + ".mp4");
-        if (Files.exists(mp4) && !Files.isDirectory(mp4)) {
-            if (!requested.toAbsolutePath().normalize().equals(mp4.normalize())) {
-                System.out.println("Using H.264 MP4 for " + name + " -> " + mp4.getFileName());
-            }
-            return mp4;
+        return dir.resolve(stem + ext);
+    }
+
+    static boolean isUsableFile(Path path) {
+        try {
+            return path != null && Files.isRegularFile(path) && Files.size(path) > 0;
+        } catch (IOException e) {
+            return false;
         }
-        return requested;
+    }
+
+    static boolean transcodeToH264(Path src, Path dst) {
+        System.out.println("Transcoding " + src.getFileName() + " -> " + dst.getFileName()
+                + " (PNG MOV cannot be decoded by OpenCV FFmpeg/MSMF)");
+        ProcessBuilder pb = new ProcessBuilder(
+                "ffmpeg", "-hide_banner", "-y",
+                "-i", src.toAbsolutePath().toString(),
+                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                "-an", dst.toAbsolutePath().toString());
+        pb.inheritIO();
+        try {
+            int code = pb.start().waitFor();
+            if (code == 0 && isUsableFile(dst)) {
+                System.out.println("Transcode OK: " + dst.getFileName());
+                return true;
+            }
+            System.err.println("ffmpeg exited with code " + code);
+        } catch (IOException e) {
+            System.err.println("ffmpeg not found on PATH: " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            System.err.println("ffmpeg transcode interrupted");
+        }
+        try {
+            Files.deleteIfExists(dst);
+        } catch (IOException ignored) {
+        }
+        return false;
     }
 
     /**
