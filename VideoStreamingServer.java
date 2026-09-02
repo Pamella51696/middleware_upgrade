@@ -23,7 +23,7 @@ import org.opencv.videoio.Videoio;
 public class VideoStreamingServer {
 
     private static final int DEFAULT_PORT  = 9090;
-    private static final int TARGET_HEIGHT = 540;
+    private static final int TARGET_HEIGHT = 720;
     private static final int TARGET_WIDTH  = 960;
     private static final int OVERLAP_PX    = 80;
     /** Last stitch panel — rear camera (bumper at bottom of raw fisheye). */
@@ -200,11 +200,11 @@ public class VideoStreamingServer {
 
     static final class FisheyeUndistorter implements CameraFeedFilter {
 
-        /** Assumed diagonal-ish horizontal coverage of the raw fisheye. Keep < 170. */
-        private static final double INPUT_FOV_DEG = 150.0;
+        /** Assumed horizontal coverage of the raw fisheye. Keep < 170. */
+        private static final double INPUT_FOV_DEG = 160.0;
 
-        /** Rectilinear view sent to stitch. 80–100 is typical; lower = more zoom. */
-        private static final double OUTPUT_FOV_DEG = 90.0;
+        /** Rectilinear view sent to stitch. Higher = more scene, less zoom. Keep under 140. */
+        private static final double OUTPUT_FOV_DEG = 120.0;
 
         private static final double[] FISHEYE_D = { 0.0, 0.0, 0.0, 0.0 };
 
@@ -321,22 +321,22 @@ public class VideoStreamingServer {
     static final class RearFeedPipeline implements CameraFeedFilter {
 
         /** Degrees to tilt the virtual camera toward the top of the raw frame. */
-        private static final double LOOK_UP_DEG = 18.0;
+        private static final double LOOK_UP_DEG = 14.0;
 
         /** Clockwise-positive in the image. Set negative to counter a clockwise roll. */
         private static final double ROLL_DEG = 0.0;
 
-        private static final double INPUT_FOV_DEG  = 160.0;
-        private static final double OUTPUT_FOV_DEG = 88.0;
+        private static final double INPUT_FOV_DEG  = 165.0;
+        private static final double OUTPUT_FOV_DEG = 118.0;
 
         /** Skip this much from the top of the remapped frame (camera housing). */
-        private static final double TOP_SKIP_FRACTION = 0.10;
+        private static final double TOP_SKIP_FRACTION = 0.06;
 
         /**
-         * Vertical window after skip. Higher includes more road / bumper;
-         * lower stays on trees/sky.
+         * Vertical window after skip. Higher includes more of the fisheye;
+         * lower crops tighter.
          */
-        private static final double KEEP_FRACTION = 0.72;
+        private static final double KEEP_FRACTION = 0.88;
 
         private Mat map1;
         private Mat map2;
