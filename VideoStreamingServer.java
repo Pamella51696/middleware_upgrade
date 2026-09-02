@@ -23,8 +23,8 @@ import org.opencv.videoio.Videoio;
 public class VideoStreamingServer {
 
     private static final int DEFAULT_PORT  = 9090;
-    private static final int TARGET_HEIGHT = 360;
-    private static final int TARGET_WIDTH  = 640;
+    private static final int TARGET_HEIGHT = 540;
+    private static final int TARGET_WIDTH  = 960;
     private static final int OVERLAP_PX    = 80;
     /** Last stitch panel — rear camera (bumper at bottom of raw fisheye). */
     private static final int REAR_CAMERA_INDEX = 3;
