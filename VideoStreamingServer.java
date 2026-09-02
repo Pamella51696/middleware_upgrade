@@ -186,27 +186,18 @@ public class VideoStreamingServer {
 
     //  FISHEYE UNDISTORT LAYER
     //
-    //  Size-adaptive recalibration: K is rebuilt from the incoming frame size,
-    //  so a new camera/resolution does not require retuning this block.
-    //  Optional knobs (FOV / balance / generic D) live only here.
-    //  Output of recalibrateAndFilter is always TARGET_WIDTH x TARGET_HEIGHT.
+    //  Size-adaptive: K is rebuilt from frame size. Do not send 180° fisheye
+    //  through a pinhole model — tan(90°) is infinite and produces the
+    //  radial starburst. Output is a finite rectilinear crop (default 90°).
 
     static final class FisheyeUndistorter {
 
-        /** Horizontal field of view assumed for an equidistant fisheye. */
-        private static final double FISHEYE_FOV_DEG = 180.0;
+        /** Assumed diagonal-ish horizontal coverage of the raw fisheye. Keep < 170. */
+        private static final double INPUT_FOV_DEG = 150.0;
 
-        /** 0 = crop to valid pixels, 1 = keep full FOV (may show black edges). */
-        private static final double BALANCE = 0.0;
+        /** Rectilinear view sent to stitch. 80–100 is typical; lower = more zoom. */
+        private static final double OUTPUT_FOV_DEG = 90.0;
 
-        /** >1 zooms in (crops more), <1 keeps more of the rectified frame. */
-        private static final double FOV_SCALE = 1.0;
-
-        /**
-         * Generic Kannala-Brandt fisheye coefficients (k1..k4).
-         * Leave at zeros for a pure equidistant model derived from FOV + size.
-         * Only change this if a new lens family is strongly non-equidistant.
-         */
         private static final double[] FISHEYE_D = { 0.0, 0.0, 0.0, 0.0 };
 
         private Mat map1;
@@ -216,10 +207,6 @@ public class VideoStreamingServer {
         private int cachedSrcW = -1;
         private int cachedSrcH = -1;
 
-        /**
-         * Recalibrate (maps rebuilt only when source size changes), undistort,
-         * lightly filter, and fit to 360x640 for the stitcher.
-         */
         void recalibrateAndFilter(Mat src, Mat dst360x640) {
             if (src == null || src.empty()) {
                 return;
@@ -230,9 +217,10 @@ public class VideoStreamingServer {
             if (undistorted == null) undistorted = new Mat();
             if (filtered == null)    filtered    = new Mat();
 
-            Imgproc.remap(src, undistorted, map1, map2, Imgproc.INTER_LINEAR);
+            Imgproc.remap(src, undistorted, map1, map2, Imgproc.INTER_LINEAR,
+                    Core.BORDER_CONSTANT);
 
-            Imgproc.GaussianBlur(undistorted, filtered, new Size(3, 3), 0.8);
+            Imgproc.GaussianBlur(undistorted, filtered, new Size(3, 3), 0.6);
 
             Size target = new Size(TARGET_WIDTH, TARGET_HEIGHT);
             if (filtered.cols() == TARGET_WIDTH && filtered.rows() == TARGET_HEIGHT) {
@@ -247,16 +235,12 @@ public class VideoStreamingServer {
                 return;
             }
 
-            Size srcSize = new Size(srcW, srcH);
             Size dstSize = new Size(TARGET_WIDTH, TARGET_HEIGHT);
 
-            Mat K = cameraMatrixFromSize(srcW, srcH);
+            Mat K = equidistantK(srcW, srcH, INPUT_FOV_DEG);
             Mat D = distortionCoeffs();
             Mat R = Mat.eye(3, 3, CvType.CV_64FC1);
-            Mat P = new Mat();
-
-            Calib3d.fisheye_estimateNewCameraMatrixForUndistortRectify(
-                    K, D, srcSize, R, P, BALANCE, dstSize, FOV_SCALE);
+            Mat P = pinholeK(TARGET_WIDTH, TARGET_HEIGHT, OUTPUT_FOV_DEG);
 
             if (map1 == null) map1 = new Mat();
             if (map2 == null) map2 = new Mat();
@@ -273,21 +257,26 @@ public class VideoStreamingServer {
             P.release();
         }
 
-        /**
-         * Equidistant fisheye K from image size only:
-         *   r = f * theta,  (width/2) = f * (fov/2 in radians)
-         * Principal point is the frame center. Resolution changes adapt automatically.
-         */
-        private static Mat cameraMatrixFromSize(int width, int height) {
-            double halfFov = Math.toRadians(FISHEYE_FOV_DEG) / 2.0;
-            double fx = (width  / 2.0) / halfFov;
-            double fy = (height / 2.0) / halfFov;
+        /** r = f * theta. fx == fy so aspect ratio is preserved. */
+        private static Mat equidistantK(int width, int height, double fovDeg) {
+            double half = Math.toRadians(fovDeg) / 2.0;
+            double f = (Math.max(width, height) / 2.0) / half;
+            return matrixK(f, f, width / 2.0, height / 2.0);
+        }
 
+        /** r = f * tan(theta). FOV must stay well below 180°. */
+        private static Mat pinholeK(int width, int height, double fovDeg) {
+            double half = Math.toRadians(fovDeg) / 2.0;
+            double f = (width / 2.0) / Math.tan(half);
+            return matrixK(f, f, width / 2.0, height / 2.0);
+        }
+
+        private static Mat matrixK(double fx, double fy, double cx, double cy) {
             Mat K = Mat.eye(3, 3, CvType.CV_64FC1);
             K.put(0, 0, fx);
             K.put(1, 1, fy);
-            K.put(0, 2, width  / 2.0);
-            K.put(1, 2, height / 2.0);
+            K.put(0, 2, cx);
+            K.put(1, 2, cy);
             return K;
         }
 
