@@ -23,7 +23,7 @@ import org.opencv.videoio.Videoio;
 public class VideoStreamingServer {
 
     private static final int DEFAULT_PORT  = 9090;
-    private static final int TARGET_HEIGHT = 720;
+    private static final int TARGET_HEIGHT = 800;
     private static final int TARGET_WIDTH  = 960;
     private static final int OVERLAP_PX    = 80;
     /** Last stitch panel — rear camera (bumper at bottom of raw fisheye). */
@@ -34,10 +34,10 @@ public class VideoStreamingServer {
      * ground drops). Negative looks down (raises a low road).
      */
     private static final double[] CAMERA_LOOK_UP_DEG = {
-        5.0,    // 0
-        -12.0,  // 1  road sat too low
-        0.0,    // 2  reference
-        16.0    // 3  rear ground sat too high
+        3.0,
+        -8.0,
+        0.0,
+        10.0
     };
 
     /**
@@ -45,10 +45,10 @@ public class VideoStreamingServer {
      * Positive lifts the scene (skips more of the top). Negative drops it.
      */
     private static final double[] CAMERA_HORIZON_LIFT = {
-        0.04,
-        0.12,
+        0.02,
+        0.06,
         0.00,
-        -0.10
+        -0.04
     };
 
     // =========================================================================
@@ -193,7 +193,7 @@ public class VideoStreamingServer {
                 + ".pano-wrap { flex: 1; min-height: 0; width: 100%; position: relative;"
                 + "  background: #000; overflow: hidden; }"
                 + ".pano-wrap img { position: absolute; inset: 0; width: 100%; height: 100%;"
-                + "  object-fit: fill; display: block; }"
+                + "  object-fit: contain; object-position: center center; display: block; }"
                 + "</style>"
                 + "</head><body>"
                 + "<div class='container'>"
@@ -225,15 +225,15 @@ public class VideoStreamingServer {
     static final class FisheyeUndistorter implements CameraFeedFilter {
 
         /** Assumed horizontal coverage of the raw fisheye. Keep < 170. */
-        private static final double INPUT_FOV_DEG = 160.0;
+        private static final double INPUT_FOV_DEG = 175.0;
 
-        /** Rectilinear view sent to stitch. Higher = more scene, less zoom. Keep under 140. */
-        private static final double OUTPUT_FOV_DEG = 120.0;
+        /** Rectilinear view sent to stitch. Higher = more of the fisheye circle. Keep under 150. */
+        private static final double OUTPUT_FOV_DEG = 138.0;
 
         private static final double[] FISHEYE_D = { 0.0, 0.0, 0.0, 0.0 };
 
         /** Extra vertical margin so pitch does not clip to black. */
-        private static final double MAP_HEIGHT_SCALE = 1.40;
+        private static final double MAP_HEIGHT_SCALE = 1.15;
 
         private final double lookUpDeg;
         private final double horizonLift;
@@ -314,14 +314,16 @@ public class VideoStreamingServer {
         /** r = f * theta. fx == fy so aspect ratio is preserved. */
         static Mat equidistantK(int width, int height, double fovDeg) {
             double half = Math.toRadians(fovDeg) / 2.0;
-            double f = (Math.max(width, height) / 2.0) / half;
+            // Inscribed circle of a circular fisheye (black corners). min() pulls
+            // in more of the circle than max(), which zooms the center.
+            double f = (Math.min(width, height) / 2.0) / half;
             return matrixK(f, f, width / 2.0, height / 2.0);
         }
 
         /** r = f * tan(theta). FOV must stay well below 180°. */
         static Mat pinholeK(int width, int height, double fovDeg) {
             double half = Math.toRadians(fovDeg) / 2.0;
-            double f = (width / 2.0) / Math.tan(half);
+            double f = (Math.min(width, height) / 2.0) / Math.tan(half);
             return matrixK(f, f, width / 2.0, height / 2.0);
         }
 
@@ -368,11 +370,11 @@ public class VideoStreamingServer {
         /** Clockwise-positive in the image. Set negative to counter a clockwise roll. */
         private static final double ROLL_DEG = 0.0;
 
-        private static final double INPUT_FOV_DEG  = 165.0;
-        private static final double OUTPUT_FOV_DEG = 118.0;
+        private static final double INPUT_FOV_DEG  = 175.0;
+        private static final double OUTPUT_FOV_DEG = 138.0;
 
-        private static final double TOP_SKIP_FRACTION = 0.06;
-        private static final double KEEP_FRACTION = 0.88;
+        private static final double TOP_SKIP_FRACTION = 0.03;
+        private static final double KEEP_FRACTION = 0.94;
 
         private final double lookUpDeg;
         private final double horizonLift;
