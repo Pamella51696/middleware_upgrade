@@ -96,7 +96,7 @@ public class VideoStreamingServer {
           }
         }
 
-        FisheyeUndistorter[] undistort = new FisheyeUndistorter[videoFiles.length];
+        CameraFeedFilter[] undistort = new CameraFeedFilter[videoFiles.length];
         for (int i = 0; i < undistort.length; i++) {
           undistort[i] = (i == REAR_CAMERA_INDEX)
               ? new RearFeedPipeline()
@@ -188,13 +188,17 @@ public class VideoStreamingServer {
     }
 
 
+    interface CameraFeedFilter {
+        void recalibrateAndFilter(Mat src, Mat dst360x640);
+    }
+
     //  FISHEYE UNDISTORT LAYER
     //
     //  Size-adaptive: K is rebuilt from frame size. Do not send 180° fisheye
     //  through a pinhole model — tan(90°) is infinite and produces the
     //  radial starburst. Output is a finite rectilinear crop (default 90°).
 
-    static class FisheyeUndistorter {
+    static final class FisheyeUndistorter implements CameraFeedFilter {
 
         /** Assumed diagonal-ish horizontal coverage of the raw fisheye. Keep < 170. */
         private static final double INPUT_FOV_DEG = 150.0;
@@ -211,7 +215,8 @@ public class VideoStreamingServer {
         private int cachedSrcW = -1;
         private int cachedSrcH = -1;
 
-        void recalibrateAndFilter(Mat src, Mat dst360x640) {
+        @Override
+        public void recalibrateAndFilter(Mat src, Mat dst360x640) {
             if (src == null || src.empty()) {
                 return;
             }
@@ -313,7 +318,7 @@ public class VideoStreamingServer {
     //  remap + top crop keeps horizon/road and drops the number plate.
     //  Only this block is used for stitch index REAR_CAMERA_INDEX.
 
-    static final class RearFeedPipeline extends FisheyeUndistorter {
+    static final class RearFeedPipeline implements CameraFeedFilter {
 
         /** Degrees to tilt the virtual camera toward the top of the raw frame. */
         private static final double LOOK_UP_DEG = 34.0;
@@ -338,7 +343,7 @@ public class VideoStreamingServer {
         private int mapH = TARGET_HEIGHT;
 
         @Override
-        void recalibrateAndFilter(Mat src, Mat dst360x640) {
+        public void recalibrateAndFilter(Mat src, Mat dst360x640) {
             if (src == null || src.empty()) {
                 return;
             }
@@ -364,11 +369,11 @@ public class VideoStreamingServer {
             mapH = (int) Math.round(TARGET_HEIGHT / KEEP_TOP_FRACTION);
             Size dstSize = new Size(TARGET_WIDTH, mapH);
 
-            Mat K = equidistantK(srcW, srcH, INPUT_FOV_DEG);
-            Mat D = distortionCoeffs();
+            Mat K = FisheyeUndistorter.equidistantK(srcW, srcH, INPUT_FOV_DEG);
+            Mat D = FisheyeUndistorter.distortionCoeffs();
             // Negative pitch (Y-down camera) aims the virtual view at the top of the fisheye.
-            Mat R = eulerRyxz(-LOOK_UP_DEG, 0.0, ROLL_DEG);
-            Mat P = pinholeK(TARGET_WIDTH, mapH, OUTPUT_FOV_DEG);
+            Mat R = FisheyeUndistorter.eulerRyxz(-LOOK_UP_DEG, 0.0, ROLL_DEG);
+            Mat P = FisheyeUndistorter.pinholeK(TARGET_WIDTH, mapH, OUTPUT_FOV_DEG);
 
             if (map1 == null) map1 = new Mat();
             if (map2 == null) map2 = new Mat();
