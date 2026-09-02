@@ -29,6 +29,28 @@ public class VideoStreamingServer {
     /** Last stitch panel — rear camera (bumper at bottom of raw fisheye). */
     private static final int REAR_CAMERA_INDEX = 3;
 
+    /**
+     * Per-panel look-up (degrees), left to right. Positive looks up (more sky,
+     * ground drops). Negative looks down (raises a low road).
+     */
+    private static final double[] CAMERA_LOOK_UP_DEG = {
+        5.0,    // 0
+        -12.0,  // 1  road sat too low
+        0.0,    // 2  reference
+        16.0    // 3  rear ground sat too high
+    };
+
+    /**
+     * Extra vertical crop shift after undistort, as a fraction of panel height.
+     * Positive lifts the scene (skips more of the top). Negative drops it.
+     */
+    private static final double[] CAMERA_HORIZON_LIFT = {
+        0.04,
+        0.12,
+        0.00,
+        -0.10
+    };
+
     // =========================================================================
     public static void main(String[] args) throws IOException {
 
@@ -98,9 +120,11 @@ public class VideoStreamingServer {
 
         CameraFeedFilter[] undistort = new CameraFeedFilter[videoFiles.length];
         for (int i = 0; i < undistort.length; i++) {
+          double lookUp = i < CAMERA_LOOK_UP_DEG.length ? CAMERA_LOOK_UP_DEG[i] : 0.0;
+          double lift   = i < CAMERA_HORIZON_LIFT.length ? CAMERA_HORIZON_LIFT[i] : 0.0;
           undistort[i] = (i == REAR_CAMERA_INDEX)
-              ? new RearFeedPipeline()
-              : new FisheyeUndistorter();
+              ? new RearFeedPipeline(lookUp, lift)
+              : new FisheyeUndistorter(lookUp, lift);
         }
 
         ex.getResponseHeaders().set("Content-Type", "multipart/x-mixed-replace; boundary=frame");
@@ -208,12 +232,28 @@ public class VideoStreamingServer {
 
         private static final double[] FISHEYE_D = { 0.0, 0.0, 0.0, 0.0 };
 
+        /** Extra vertical margin so pitch does not clip to black. */
+        private static final double MAP_HEIGHT_SCALE = 1.40;
+
+        private final double lookUpDeg;
+        private final double horizonLift;
+
         private Mat map1;
         private Mat map2;
         private Mat undistorted;
         private Mat filtered;
         private int cachedSrcW = -1;
         private int cachedSrcH = -1;
+        private int mapH = TARGET_HEIGHT;
+
+        FisheyeUndistorter() {
+            this(0.0, 0.0);
+        }
+
+        FisheyeUndistorter(double lookUpDeg, double horizonLift) {
+            this.lookUpDeg = lookUpDeg;
+            this.horizonLift = horizonLift;
+        }
 
         @Override
         public void recalibrateAndFilter(Mat src, Mat dst360x640) {
@@ -229,13 +269,17 @@ public class VideoStreamingServer {
             Imgproc.remap(src, undistorted, map1, map2, Imgproc.INTER_LINEAR,
                     Core.BORDER_CONSTANT);
 
-            Imgproc.GaussianBlur(undistorted, filtered, new Size(3, 3), 0.6);
-
-            Size target = new Size(TARGET_WIDTH, TARGET_HEIGHT);
+            int h = undistorted.rows();
+            int y0 = (h - TARGET_HEIGHT) / 2 - (int) Math.round(horizonLift * TARGET_HEIGHT);
+            if (y0 < 0) y0 = 0;
+            if (y0 + TARGET_HEIGHT > h) y0 = Math.max(0, h - TARGET_HEIGHT);
+            Mat window = undistorted.rowRange(y0, y0 + Math.min(TARGET_HEIGHT, h - y0));
+            Imgproc.GaussianBlur(window, filtered, new Size(3, 3), 0.6);
             if (filtered.cols() == TARGET_WIDTH && filtered.rows() == TARGET_HEIGHT) {
                 filtered.copyTo(dst360x640);
             } else {
-                Imgproc.resize(filtered, dst360x640, target, 0, 0, Imgproc.INTER_AREA);
+                Imgproc.resize(filtered, dst360x640,
+                        new Size(TARGET_WIDTH, TARGET_HEIGHT), 0, 0, Imgproc.INTER_AREA);
             }
         }
 
@@ -244,12 +288,13 @@ public class VideoStreamingServer {
                 return;
             }
 
-            Size dstSize = new Size(TARGET_WIDTH, TARGET_HEIGHT);
+            mapH = (int) Math.round(TARGET_HEIGHT * MAP_HEIGHT_SCALE);
+            Size dstSize = new Size(TARGET_WIDTH, mapH);
 
             Mat K = equidistantK(srcW, srcH, INPUT_FOV_DEG);
             Mat D = distortionCoeffs();
-            Mat R = Mat.eye(3, 3, CvType.CV_64FC1);
-            Mat P = pinholeK(TARGET_WIDTH, TARGET_HEIGHT, OUTPUT_FOV_DEG);
+            Mat R = eulerRyxz(-lookUpDeg, 0.0, 0.0);
+            Mat P = pinholeK(TARGET_WIDTH, mapH, OUTPUT_FOV_DEG);
 
             if (map1 == null) map1 = new Mat();
             if (map2 == null) map2 = new Mat();
@@ -320,23 +365,17 @@ public class VideoStreamingServer {
 
     static final class RearFeedPipeline implements CameraFeedFilter {
 
-        /** Degrees to tilt the virtual camera toward the top of the raw frame. */
-        private static final double LOOK_UP_DEG = 14.0;
-
         /** Clockwise-positive in the image. Set negative to counter a clockwise roll. */
         private static final double ROLL_DEG = 0.0;
 
         private static final double INPUT_FOV_DEG  = 165.0;
         private static final double OUTPUT_FOV_DEG = 118.0;
 
-        /** Skip this much from the top of the remapped frame (camera housing). */
         private static final double TOP_SKIP_FRACTION = 0.06;
-
-        /**
-         * Vertical window after skip. Higher includes more of the fisheye;
-         * lower crops tighter.
-         */
         private static final double KEEP_FRACTION = 0.88;
+
+        private final double lookUpDeg;
+        private final double horizonLift;
 
         private Mat map1;
         private Mat map2;
@@ -344,6 +383,11 @@ public class VideoStreamingServer {
         private int cachedSrcW = -1;
         private int cachedSrcH = -1;
         private int mapH = TARGET_HEIGHT;
+
+        RearFeedPipeline(double lookUpDeg, double horizonLift) {
+            this.lookUpDeg = lookUpDeg;
+            this.horizonLift = horizonLift;
+        }
 
         @Override
         public void recalibrateAndFilter(Mat src, Mat dst360x640) {
@@ -358,8 +402,9 @@ public class VideoStreamingServer {
             Imgproc.remap(src, undistorted, map1, map2, Imgproc.INTER_LINEAR);
 
             int h = undistorted.rows();
-            int skip = (int) Math.round(h * TOP_SKIP_FRACTION);
+            int skip = (int) Math.round(h * (TOP_SKIP_FRACTION + horizonLift));
             int keepH = Math.max(1, (int) Math.round(h * KEEP_FRACTION));
+            if (skip < 0) skip = 0;
             if (skip + keepH > h) {
                 keepH = h - skip;
             }
@@ -382,8 +427,7 @@ public class VideoStreamingServer {
 
             Mat K = FisheyeUndistorter.equidistantK(srcW, srcH, INPUT_FOV_DEG);
             Mat D = FisheyeUndistorter.distortionCoeffs();
-            // Negative pitch (Y-down camera) aims the virtual view at the top of the fisheye.
-            Mat R = FisheyeUndistorter.eulerRyxz(-LOOK_UP_DEG, 0.0, ROLL_DEG);
+            Mat R = FisheyeUndistorter.eulerRyxz(-lookUpDeg, 0.0, ROLL_DEG);
             Mat P = FisheyeUndistorter.pinholeK(TARGET_WIDTH, mapH, OUTPUT_FOV_DEG);
 
             if (map1 == null) map1 = new Mat();
