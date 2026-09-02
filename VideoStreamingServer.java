@@ -321,7 +321,7 @@ public class VideoStreamingServer {
     static final class RearFeedPipeline implements CameraFeedFilter {
 
         /** Degrees to tilt the virtual camera toward the top of the raw frame. */
-        private static final double LOOK_UP_DEG = 34.0;
+        private static final double LOOK_UP_DEG = 18.0;
 
         /** Clockwise-positive in the image. Set negative to counter a clockwise roll. */
         private static final double ROLL_DEG = 0.0;
@@ -329,11 +329,14 @@ public class VideoStreamingServer {
         private static final double INPUT_FOV_DEG  = 160.0;
         private static final double OUTPUT_FOV_DEG = 88.0;
 
+        /** Skip this much from the top of the remapped frame (camera housing). */
+        private static final double TOP_SKIP_FRACTION = 0.10;
+
         /**
-         * After look-up remap, keep this fraction from the top and discard the rest
-         * (bumper / plate). 0.65–0.80 is typical.
+         * Vertical window after skip. Higher includes more road / bumper;
+         * lower stays on trees/sky.
          */
-        private static final double KEEP_TOP_FRACTION = 0.68;
+        private static final double KEEP_FRACTION = 0.72;
 
         private Mat map1;
         private Mat map2;
@@ -354,10 +357,18 @@ public class VideoStreamingServer {
 
             Imgproc.remap(src, undistorted, map1, map2, Imgproc.INTER_LINEAR);
 
-            int keepH = Math.max(1, (int) Math.round(mapH * KEEP_TOP_FRACTION));
-            keepH = Math.min(keepH, undistorted.rows());
-            Mat top = undistorted.rowRange(0, keepH);
-            Imgproc.resize(top, dst360x640, new Size(TARGET_WIDTH, TARGET_HEIGHT),
+            int h = undistorted.rows();
+            int skip = (int) Math.round(h * TOP_SKIP_FRACTION);
+            int keepH = Math.max(1, (int) Math.round(h * KEEP_FRACTION));
+            if (skip + keepH > h) {
+                keepH = h - skip;
+            }
+            if (keepH < 1) {
+                skip = 0;
+                keepH = h;
+            }
+            Mat window = undistorted.rowRange(skip, skip + keepH);
+            Imgproc.resize(window, dst360x640, new Size(TARGET_WIDTH, TARGET_HEIGHT),
                     0, 0, Imgproc.INTER_AREA);
         }
 
@@ -366,7 +377,7 @@ public class VideoStreamingServer {
                 return;
             }
 
-            mapH = (int) Math.round(TARGET_HEIGHT / KEEP_TOP_FRACTION);
+            mapH = (int) Math.round(TARGET_HEIGHT / KEEP_FRACTION);
             Size dstSize = new Size(TARGET_WIDTH, mapH);
 
             Mat K = FisheyeUndistorter.equidistantK(srcW, srcH, INPUT_FOV_DEG);
