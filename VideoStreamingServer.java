@@ -485,25 +485,20 @@ public class VideoStreamingServer {
 
     static VideoCapture tryOpen(String file, int api, String label, double convertRgb) {
         VideoCapture cap = new VideoCapture();
+        MatOfInt params = new MatOfInt(Videoio.CAP_PROP_CONVERT_RGB, (int) convertRgb);
         try {
-            List<Integer> params = new ArrayList<>();
-            params.add(Videoio.CAP_PROP_CONVERT_RGB);
-            params.add((int) convertRgb);
-            boolean opened;
-            try {
-                opened = cap.open(file, api, params);
-            } catch (Throwable ignored) {
-                cap.set(Videoio.CAP_PROP_CONVERT_RGB, convertRgb);
-                opened = cap.open(file, api);
-            }
+            boolean opened = cap.open(file, api, params);
             if (!opened || !cap.isOpened()) {
                 cap.release();
+                params.release();
                 return null;
             }
         } catch (Exception e) {
             cap.release();
+            params.release();
             return null;
         }
+        params.release();
 
         cap.set(Videoio.CAP_PROP_CONVERT_RGB, convertRgb);
         if (!probeFrame(cap)) {
