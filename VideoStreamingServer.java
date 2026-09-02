@@ -29,16 +29,16 @@ public class VideoStreamingServer {
     // =========================================================================
     public static void main(String[] args) throws IOException {
 
-        Path frontVideo = Paths.get("rear_1.mov");
-        Path rearVideo  = Paths.get("left_1.mov");
-        Path sideVideo  = Paths.get("right_1.mov");
-        Path backVideo  = Paths.get("front_1.mov");
+        Path frontVideo = preferH264(Paths.get("rear_1.mov"));
+        Path rearVideo  = preferH264(Paths.get("left_1.mov"));
+        Path sideVideo  = preferH264(Paths.get("right_1.mov"));
+        Path backVideo  = preferH264(Paths.get("front_1.mov"));
 
         if (args.length >= 5) {
-            frontVideo = Paths.get(args[1]);
-            rearVideo  = Paths.get(args[2]);
-            sideVideo  = Paths.get(args[3]);
-            backVideo  = Paths.get(args[4]);
+            frontVideo = preferH264(Paths.get(args[1]));
+            rearVideo  = preferH264(Paths.get(args[2]));
+            sideVideo  = preferH264(Paths.get(args[3]));
+            backVideo  = preferH264(Paths.get(args[4]));
         }
 
         Path[] videos = { frontVideo, rearVideo, sideVideo, backVideo };
@@ -70,6 +70,8 @@ public class VideoStreamingServer {
         System.out.println("Server started  ->  http://localhost:" + port + "/play");
         System.out.println("Feeds: front=" + frontVideo + " rear=" + rearVideo
                 + " side=" + sideVideo + " back=" + backVideo);
+        System.out.println("Windows: if you see cap_msmf RGB32 'codec not found', "
+                + "transcode each .mov to H.264 .mp4 (see preferH264).");
     }
 
     // STITCH HANDLER  -  undistort each feed, then feather-blend panorama
@@ -380,6 +382,31 @@ public class VideoStreamingServer {
 
 
     // VIDEO IO  —  FFmpeg first (Windows MSMF often cannot decode .mov to RGB32)
+
+    /**
+     * MSMF cannot decode many .mov codecs as RGB32. If a sibling .mp4 exists
+     * (H.264 / yuv420p), use that without changing the four feed parameters.
+     */
+    static Path preferH264(Path requested) {
+        if (requested == null) {
+            return requested;
+        }
+        String name = requested.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        String stem = dot >= 0 ? name.substring(0, dot) : name;
+        Path dir = requested.toAbsolutePath().getParent();
+        if (dir == null) {
+            dir = Paths.get(".");
+        }
+        Path mp4 = dir.resolve(stem + ".mp4");
+        if (Files.exists(mp4) && !Files.isDirectory(mp4)) {
+            if (!requested.toAbsolutePath().normalize().equals(mp4.normalize())) {
+                System.out.println("Using H.264 MP4 for " + name + " -> " + mp4.getFileName());
+            }
+            return mp4;
+        }
+        return requested;
+    }
 
     static VideoCapture openVideo(Path path) {
         String file = path.toString();
