@@ -26,6 +26,8 @@ public class VideoStreamingServer {
     private static final int TARGET_HEIGHT = 360;
     private static final int TARGET_WIDTH  = 640;
     private static final int OVERLAP_PX    = 80;
+    /** Last stitch panel — rear camera (bumper at bottom of raw fisheye). */
+    private static final int REAR_CAMERA_INDEX = 3;
 
     // =========================================================================
     public static void main(String[] args) throws IOException {
@@ -96,7 +98,9 @@ public class VideoStreamingServer {
 
         FisheyeUndistorter[] undistort = new FisheyeUndistorter[videoFiles.length];
         for (int i = 0; i < undistort.length; i++) {
-          undistort[i] = new FisheyeUndistorter();
+          undistort[i] = (i == REAR_CAMERA_INDEX)
+              ? new RearFeedPipeline()
+              : new FisheyeUndistorter();
         }
 
         ex.getResponseHeaders().set("Content-Type", "multipart/x-mixed-replace; boundary=frame");
@@ -258,20 +262,20 @@ public class VideoStreamingServer {
         }
 
         /** r = f * theta. fx == fy so aspect ratio is preserved. */
-        private static Mat equidistantK(int width, int height, double fovDeg) {
+        static Mat equidistantK(int width, int height, double fovDeg) {
             double half = Math.toRadians(fovDeg) / 2.0;
             double f = (Math.max(width, height) / 2.0) / half;
             return matrixK(f, f, width / 2.0, height / 2.0);
         }
 
         /** r = f * tan(theta). FOV must stay well below 180°. */
-        private static Mat pinholeK(int width, int height, double fovDeg) {
+        static Mat pinholeK(int width, int height, double fovDeg) {
             double half = Math.toRadians(fovDeg) / 2.0;
             double f = (width / 2.0) / Math.tan(half);
             return matrixK(f, f, width / 2.0, height / 2.0);
         }
 
-        private static Mat matrixK(double fx, double fy, double cx, double cy) {
+        static Mat matrixK(double fx, double fy, double cx, double cy) {
             Mat K = Mat.eye(3, 3, CvType.CV_64FC1);
             K.put(0, 0, fx);
             K.put(1, 1, fy);
@@ -280,13 +284,105 @@ public class VideoStreamingServer {
             return K;
         }
 
-        private static Mat distortionCoeffs() {
+        static Mat distortionCoeffs() {
             Mat D = new Mat(4, 1, CvType.CV_64FC1);
             D.put(0, 0, FISHEYE_D[0]);
             D.put(1, 0, FISHEYE_D[1]);
             D.put(2, 0, FISHEYE_D[2]);
             D.put(3, 0, FISHEYE_D[3]);
             return D;
+        }
+
+        static Mat eulerRyxz(double pitchDeg, double yawDeg, double rollDeg) {
+            Mat rvec = new Mat(3, 1, CvType.CV_64FC1);
+            rvec.put(0, 0, Math.toRadians(pitchDeg));
+            rvec.put(1, 0, Math.toRadians(yawDeg));
+            rvec.put(2, 0, Math.toRadians(rollDeg));
+            Mat R = new Mat();
+            Calib3d.Rodrigues(rvec, R);
+            rvec.release();
+            return R;
+        }
+    }
+
+
+    //  REAR CAMERA PIPELINE
+    //
+    //  The rear fisheye sits low and looks down: bumper / plate fill the bottom
+    //  of the circle and the street sits in the upper FOV. A separate pitch-up
+    //  remap + top crop keeps horizon/road and drops the number plate.
+    //  Only this block is used for stitch index REAR_CAMERA_INDEX.
+
+    static final class RearFeedPipeline extends FisheyeUndistorter {
+
+        /** Degrees to tilt the virtual camera toward the top of the raw frame. */
+        private static final double LOOK_UP_DEG = 34.0;
+
+        /** Clockwise-positive in the image. Set negative to counter a clockwise roll. */
+        private static final double ROLL_DEG = 0.0;
+
+        private static final double INPUT_FOV_DEG  = 160.0;
+        private static final double OUTPUT_FOV_DEG = 88.0;
+
+        /**
+         * After look-up remap, keep this fraction from the top and discard the rest
+         * (bumper / plate). 0.65–0.80 is typical.
+         */
+        private static final double KEEP_TOP_FRACTION = 0.68;
+
+        private Mat map1;
+        private Mat map2;
+        private Mat undistorted;
+        private int cachedSrcW = -1;
+        private int cachedSrcH = -1;
+        private int mapH = TARGET_HEIGHT;
+
+        @Override
+        void recalibrateAndFilter(Mat src, Mat dst360x640) {
+            if (src == null || src.empty()) {
+                return;
+            }
+
+            ensureMaps(src.cols(), src.rows());
+
+            if (undistorted == null) undistorted = new Mat();
+
+            Imgproc.remap(src, undistorted, map1, map2, Imgproc.INTER_LINEAR);
+
+            int keepH = Math.max(1, (int) Math.round(mapH * KEEP_TOP_FRACTION));
+            keepH = Math.min(keepH, undistorted.rows());
+            Mat top = undistorted.rowRange(0, keepH);
+            Imgproc.resize(top, dst360x640, new Size(TARGET_WIDTH, TARGET_HEIGHT),
+                    0, 0, Imgproc.INTER_AREA);
+        }
+
+        private void ensureMaps(int srcW, int srcH) {
+            if (map1 != null && srcW == cachedSrcW && srcH == cachedSrcH) {
+                return;
+            }
+
+            mapH = (int) Math.round(TARGET_HEIGHT / KEEP_TOP_FRACTION);
+            Size dstSize = new Size(TARGET_WIDTH, mapH);
+
+            Mat K = equidistantK(srcW, srcH, INPUT_FOV_DEG);
+            Mat D = distortionCoeffs();
+            // Negative pitch (Y-down camera) aims the virtual view at the top of the fisheye.
+            Mat R = eulerRyxz(-LOOK_UP_DEG, 0.0, ROLL_DEG);
+            Mat P = pinholeK(TARGET_WIDTH, mapH, OUTPUT_FOV_DEG);
+
+            if (map1 == null) map1 = new Mat();
+            if (map2 == null) map2 = new Mat();
+
+            Calib3d.fisheye_initUndistortRectifyMap(
+                    K, D, R, P, dstSize, CvType.CV_16SC2, map1, map2);
+
+            cachedSrcW = srcW;
+            cachedSrcH = srcH;
+
+            K.release();
+            D.release();
+            R.release();
+            P.release();
         }
     }
 
