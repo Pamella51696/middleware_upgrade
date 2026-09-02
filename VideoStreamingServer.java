@@ -194,7 +194,7 @@ public class VideoStreamingServer {
     //  through a pinhole model — tan(90°) is infinite and produces the
     //  radial starburst. Output is a finite rectilinear crop (default 90°).
 
-    static final class FisheyeUndistorter {
+    static class FisheyeUndistorter {
 
         /** Assumed diagonal-ish horizontal coverage of the raw fisheye. Keep < 170. */
         private static final double INPUT_FOV_DEG = 150.0;
