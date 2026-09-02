@@ -2,6 +2,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -58,6 +59,7 @@ public class VideoStreamingServer {
             System.err.println("OpenCV native library not found: " + e.getMessage());
             return;
         }
+        loadFfmpegPlugin();
 
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
 
@@ -381,12 +383,8 @@ public class VideoStreamingServer {
     }
 
 
-    // VIDEO IO  —  FFmpeg first (Windows MSMF often cannot decode .mov to RGB32)
+    // VIDEO IO  —  FFmpeg plugin, then MSMF without RGB32 conversion
 
-    /**
-     * MSMF cannot decode many .mov codecs as RGB32. If a sibling .mp4 exists
-     * (H.264 / yuv420p), use that without changing the four feed parameters.
-     */
     static Path preferH264(Path requested) {
         if (requested == null) {
             return requested;
@@ -408,40 +406,97 @@ public class VideoStreamingServer {
         return requested;
     }
 
+    /**
+     * Official Windows OpenCV puts opencv_java*.dll in build/java/x64 and the
+     * FFmpeg videoio plugin in build/bin. java.library.path usually only has
+     * the first folder, so MSMF is used and .mov RGB32 decode fails.
+     */
+    static void loadFfmpegPlugin() {
+        String[] dllNames = {
+            "opencv_videoio_ffmpeg490_64.dll",
+            "opencv_videoio_ffmpeg4.dll",
+            "opencv_videoio_ffmpeg.dll"
+        };
+        List<Path> dirs = new ArrayList<>();
+        String libPath = System.getProperty("java.library.path", "");
+        for (String dir : libPath.split(File.pathSeparator)) {
+            if (dir == null || dir.trim().isEmpty()) continue;
+            Path p = Paths.get(dir.trim()).toAbsolutePath().normalize();
+            dirs.add(p);
+            if (p.getParent() != null) {
+                dirs.add(p.getParent());
+                if (p.getParent().getParent() != null) {
+                    dirs.add(p.getParent().getParent().resolve("bin"));
+                }
+            }
+        }
+        dirs.add(Paths.get("opencv", "build", "bin").toAbsolutePath());
+        dirs.add(Paths.get("..", "opencv", "build", "bin").toAbsolutePath());
+
+        for (Path dir : dirs) {
+            for (String dll : dllNames) {
+                Path candidate = dir.resolve(dll).normalize();
+                if (!Files.isRegularFile(candidate)) continue;
+                try {
+                    System.load(candidate.toString());
+                    System.out.println("Loaded FFmpeg videoio plugin: " + candidate);
+                    return;
+                } catch (Throwable t) {
+                    System.err.println("Could not load " + candidate + ": " + t.getMessage());
+                }
+            }
+        }
+        System.err.println("FFmpeg videoio plugin not loaded. MSMF will be used for .mov "
+                + "and may fail RGB32. Copy opencv_videoio_ffmpeg490_64.dll next to "
+                + "opencv_java490.dll or into opencv\\build\\bin on PATH.");
+    }
+
     static VideoCapture openVideo(Path path) {
-        String file = path.toString();
+        String file = path.toAbsolutePath().toString();
 
-        VideoCapture cap = tryOpen(file, Videoio.CAP_FFMPEG, "FFMPEG");
-        if (cap != null) {
-            return cap;
+        int[] apis = {
+            Videoio.CAP_FFMPEG,
+            Videoio.CAP_ANY,
+            Videoio.CAP_MSMF
+        };
+        String[] labels = { "FFMPEG", "ANY", "MSMF" };
+
+        for (int a = 0; a < apis.length; a++) {
+            for (double convert : new double[]{ (apis[a] == Videoio.CAP_MSMF ? 0 : 1), 0, 1 }) {
+                VideoCapture cap = tryOpen(file, apis[a], labels[a], convert);
+                if (cap != null) {
+                    return cap;
+                }
+            }
         }
 
-        System.err.println("FFmpeg backend did not open " + path.getFileName()
-                + ". Add opencv_videoio_ffmpeg490_64.dll to PATH (opencv\\build\\bin), "
-                + "then retry. Falling back to other backends.");
-
-        cap = tryOpen(file, Videoio.CAP_ANY, "ANY");
-        if (cap != null) {
-            return cap;
-        }
-        cap = tryOpen(file, Videoio.CAP_MSMF, "MSMF");
-        if (cap != null) {
-            return cap;
-        }
-
-        cap = new VideoCapture(file);
-        if (cap.isOpened() && probeFrame(cap)) {
-            logBackend(file, cap, "default");
-            return cap;
+        VideoCapture cap = new VideoCapture();
+        cap.open(file);
+        if (cap.isOpened()) {
+            cap.set(Videoio.CAP_PROP_CONVERT_RGB, 0);
+            if (probeFrame(cap)) {
+                logBackend(file, cap, "default");
+                return cap;
+            }
         }
         cap.release();
         return null;
     }
 
-    static VideoCapture tryOpen(String file, int api, String label) {
+    static VideoCapture tryOpen(String file, int api, String label, double convertRgb) {
         VideoCapture cap = new VideoCapture();
         try {
-            if (!cap.open(file, api) || !cap.isOpened()) {
+            List<Integer> params = new ArrayList<>();
+            params.add(Videoio.CAP_PROP_CONVERT_RGB);
+            params.add((int) convertRgb);
+            boolean opened;
+            try {
+                opened = cap.open(file, api, params);
+            } catch (Throwable ignored) {
+                cap.set(Videoio.CAP_PROP_CONVERT_RGB, convertRgb);
+                opened = cap.open(file, api);
+            }
+            if (!opened || !cap.isOpened()) {
                 cap.release();
                 return null;
             }
@@ -450,24 +505,29 @@ public class VideoStreamingServer {
             return null;
         }
 
-        cap.set(Videoio.CAP_PROP_CONVERT_RGB, 1);
+        cap.set(Videoio.CAP_PROP_CONVERT_RGB, convertRgb);
         if (!probeFrame(cap)) {
             cap.release();
             return null;
         }
-        logBackend(file, cap, label);
+        logBackend(file, cap, label + " convertRGB=" + (int) convertRgb);
         return cap;
     }
 
-    /** Confirm a real frame can be decoded, then rewind so streaming starts at frame 0. */
     static boolean probeFrame(VideoCapture cap) {
         Mat probe = new Mat();
         boolean ok = cap.read(probe) && !probe.empty();
+        if (ok) {
+            Mat bgr = new Mat();
+            ok = toBgr(probe, bgr);
+            bgr.release();
+        }
         probe.release();
         if (!ok) {
             return false;
         }
         cap.set(Videoio.CAP_PROP_POS_FRAMES, 0);
+        cap.set(Videoio.CAP_PROP_POS_MSEC, 0);
         return true;
     }
 
@@ -476,27 +536,81 @@ public class VideoStreamingServer {
         try {
             String named = cap.getBackendName();
             if (named != null && !named.isEmpty()) {
-                backend = named;
+                backend = named + " / " + requested;
             }
         } catch (Exception ignored) {
         }
         System.out.println("Opened " + file + " [" + backend + "]");
     }
 
+    static boolean toBgr(Mat src, Mat dst) {
+        if (src == null || src.empty()) {
+            return false;
+        }
+        int type = src.type();
+        if (type == CvType.CV_8UC3) {
+            src.copyTo(dst);
+            return true;
+        }
+        if (type == CvType.CV_8UC4) {
+            Imgproc.cvtColor(src, dst, Imgproc.COLOR_BGRA2BGR);
+            return !dst.empty();
+        }
+        if (type == CvType.CV_8UC2) {
+            Imgproc.cvtColor(src, dst, Imgproc.COLOR_YUV2BGR_YUY2);
+            return !dst.empty();
+        }
+        if (src.channels() == 1) {
+            int h = src.rows();
+            int w = src.cols();
+            if (h * 2 % 3 == 0) {
+                int visH = h * 2 / 3;
+                if (visH > 0 && visH * 3 / 2 == h) {
+                    try {
+                        Imgproc.cvtColor(src, dst, Imgproc.COLOR_YUV2BGR_NV12);
+                        if (!dst.empty() && dst.channels() == 3) {
+                            return true;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+            Imgproc.cvtColor(src, dst, Imgproc.COLOR_GRAY2BGR);
+            return !dst.empty();
+        }
+        src.copyTo(dst);
+        return !dst.empty();
+    }
+
+    static boolean readBgr(VideoCapture cap, Mat bgr) {
+        if (cap == null || !cap.isOpened()) {
+            return false;
+        }
+        Mat raw = new Mat();
+        if (!cap.read(raw) || raw.empty()) {
+            raw.release();
+            return false;
+        }
+        boolean ok = toBgr(raw, bgr);
+        raw.release();
+        return ok && bgr != null && !bgr.empty();
+    }
+
     static boolean readOrLoop(VideoCapture[] caps, int i, Path path, Mat frame) {
-        if (caps[i].read(frame) && !frame.empty()) {
+        if (readBgr(caps[i], frame)) {
             return true;
         }
 
         caps[i].set(Videoio.CAP_PROP_POS_FRAMES, 0);
-        if (caps[i].read(frame) && !frame.empty()) {
+        caps[i].set(Videoio.CAP_PROP_POS_MSEC, 0);
+        if (readBgr(caps[i], frame)) {
             System.out.println("Video " + i + " looped via seek");
             return true;
         }
 
         caps[i].release();
         caps[i] = openVideo(path);
-        if (caps[i] != null && caps[i].read(frame) && !frame.empty()) {
+        if (readBgr(caps[i], frame)) {
             System.out.println("Video " + i + " reopened after loop");
             return true;
         }
