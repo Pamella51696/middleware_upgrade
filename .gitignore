@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+output/
+data/synthetic/
+*.mp4
+*.avi
+*.mov
+*.mkv
+.DS_Store
+.idea/
+.vscode/

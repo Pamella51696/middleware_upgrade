@@ -1,0 +1,45 @@
+pairs:
+  - [LEFT, FRONT]
+  - [FRONT, RIGHT]
+  - [RIGHT, REAR]
+  - [REAR, LEFT]
+
+alignment:
+  detector: ORB             # ORB | AKAZE  (SIFT optional; license/perf)
+  nfeatures: 2000
+  matcher: bf               # brute-force Hamming for binary descriptors
+  ransac_reproj_threshold: 4.0
+  min_inliers: 25
+  min_inlier_ratio: 0.25
+  transform: similarity     # translation | similarity | affine | homography
+                            # RECOMMENDED: similarity (dx, dy, rotation, scale)
+  max_abs_dx_px: 120
+  max_abs_dy_px: 80
+  max_abs_rotation_deg: 8
+  max_scale_deviation: 0.15
+  refine: photometric       # none | photometric
+  refine_max_iters: 25
+  hold_last_on_low_confidence: true
+
+overlap:
+  # Fraction of each camera's projected width treated as overlap (manual knobs)
+  FRONT: { left: 0.22, right: 0.22 }
+  LEFT:  { left: 0.18, right: 0.28 }
+  RIGHT: { left: 0.28, right: 0.18 }
+  REAR:  { left: 0.22, right: 0.22 }
+
+seam:
+  mode: feather             # hard | feather | multiband
+  blend_width_px: 80
+
+photometric:
+  enabled: true
+  method: gain_offset       # I' = gain * I + offset from overlap stats
+  reference: FRONT
+  max_gain: 2.5
+  max_offset: 40.0
+
+runtime:
+  realign_every_n_frames: 0 # 0 = never; alignment is offline / frozen
+  hold_last_frame_ms: 200
+  jpeg_quality: 85

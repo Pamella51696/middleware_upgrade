@@ -1,0 +1,24 @@
+# Projection is independent of the fisheye camera model.
+# Stitching always uses a panoramic (cylindrical or spherical) canvas.
+# Perspective undistortion is a debug / comparison view only — it cannot
+# represent a ~190° fisheye FOV without extreme stretch or crop.
+
+model: cylindrical          # perspective | cylindrical | spherical
+                            # RECOMMENDED: cylindrical for ~270° driving view
+
+perspective:
+  balance: 0.5              # cv2.fisheye estimateNewCameraMatrix: 0=crop, 1=keep FOV
+  fov_scale: 1.0
+
+cylindrical:
+  # Horizontal: theta in [yaw_center - fov/2, yaw_center + fov/2]
+  # Vertical:   phi linear in tan-less cylindrical (phi = (y-cy)/fy_cyl)
+  use_equirectangular_vertical: false
+
+spherical:
+  # Equirectangular: x -> theta, y -> phi (latitude)
+  pole_clip_deg: 80
+
+map_type: CV_32FC1          # float maps; switch to CV_16SC2 later for Jetson
+interpolation: linear       # nearest | linear | cubic
+border: constant
