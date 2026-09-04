@@ -133,15 +133,15 @@ Seams: **feather** using a distance transform of the validity mask (default). Ha
 
 | Module | Responsibility |
 |---|---|
-| `input/` | Video / images / synthetic; sync; missing-camera policy |
-| `calibration/` | `CameraModel`, Mode A K/D, OpenCV fisheye LUTs |
-| `projection/` | Cylinder / sphere maps, cache keyed on K,D,pose,alignment |
-| `alignment/` | ORB, BFMatcher, RANSAC similarity, refine, offline YAML |
-| `stitching/` | Masks, gain/offset, feather, seam viz |
-| `runtime/` | Processor, metrics, performance |
-| `visualization/` | Eight debug views + Flask sliders |
-| `tools/synthetic.py` | Stand-in overlapping fisheye world |
-| `config/*.yaml` | All tunables, Mode B slots (`fx: calibrated`) |
+| `fisheye270.input` | VideoCapture / in-memory; lock-step sync; missing-camera policy |
+| `fisheye270.calibration` | `CameraModel`, Mode A K/D, OpenCV fisheye LUTs |
+| `fisheye270.projection` | Cylinder / sphere maps (`mapX`/`mapY`) |
+| `fisheye270.alignment` | ORB, BFMatcher, RANSAC similarity |
+| `fisheye270.stitching` | Masks, gain/offset, feather, seam viz |
+| `fisheye270.runtime` | `Processor` sequences the four stages |
+| `fisheye270.DebugServer` | Eight debug views + sliders + `/play` MJPEG |
+| `fisheye270.tools.SyntheticWorld` | Stand-in overlapping fisheye cameras |
+| `config/*.yaml` | All tunables, Mode B slots (`source: calibrated`) |
 
 No God class: `Processor` only sequences the four stages.
 
@@ -158,29 +158,27 @@ Every intrinsic may be `null` (Mode A fill) or a number with `source: calibrated
 
 | Command | Phase |
 |---|---|
-| `python -m fisheye_270.main phase1` | 1 sync raw |
+| `mvn -q exec:java -Dexec.args="phase1"` | 1 sync raw |
 | `… phase2` | 2 FRONT undistort |
 | `… phase3` | 3 all four undistort |
 | `… compare-projections` | 4 perspective/cyl/sphere |
-| `… align` | 5–8 overlap, ORB, RANSAC, freeze YAML |
+| `… align` | 5–8 overlap, ORB, RANSAC |
 | `… run --fov 270` | 9–13 masks, photo, blend, pano video |
-| `… serve` | debug UI views 1–8 + sliders |
+| `… serve 9090` | debug UI + `/play` |
 
 ---
 
 ## J. Performance → C++ / CUDA / Jetson
 
-Python is the algorithm lab. The hot path is already LUT `remap` (good). Next:
+The implementation is **Java + OpenCV** (`org.opencv`, OpenPnP natives). The hot path is LUT `Imgproc.remap`. Next on Jetson:
 
-1. Keep maps as `CV_16SC2` + `INTER_LINEAR` (faster gather).
-2. `cv2.cuda.remap` (OpenCV CUDA) for four remaps + blend on Orin Nano. No TensorRT — there is no network.
-3. Optional: one fused CUDA kernel (remap + weight + accumulate) to cut memory traffic.
-4. Capture: **GStreamer** (`nvarguscamerasrc` / V4L2) into CUDA buffers. **DeepStream is not required** unless you already use it for other analytics.
-5. C++ port of `Processor` + same YAML. Python UI can stay as a tuner that writes YAML.
+1. Keep maps as `CV_16SC2` + `INTER_LINEAR`.
+2. OpenCV CUDA remap × 4 + blend on Orin Nano. No TensorRT — there is no network.
+3. Optional fused CUDA kernel if Nsight shows memory-bound remaps.
+4. Capture: **GStreamer** into CUDA buffers. **DeepStream is not required**.
+5. Same YAML. Debug UI can stay on the JVM HTTP server.
 
-Expected bottleneck: four 1080p remaps + a 1920×540 blend. Orin Nano GPU remap should be real-time; CPU Python is the prototype (tens of ms/frame at 640×480 synthetic).
-
-Profile fields: FPS, latency_ms, CPU%, RSS, GPU% (GPU via `tegrastats` on device; `-1` here).
+Expected bottleneck: four 1080p remaps + a 1920×540 blend. CPU Java is the prototype.
 
 ---
 

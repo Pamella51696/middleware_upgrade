@@ -16,7 +16,7 @@ cameras:
   FRONT:
     source:
       type: video                  # video | images | synthetic
-      path: data/synthetic/front.mp4
+      path: data/synthetic/front.avi
     image:
       width: 640                   # KNOWN after first frame (overwritten)
       height: 480
@@ -54,7 +54,7 @@ cameras:
   LEFT:
     source:
       type: video
-      path: data/synthetic/left.mp4
+      path: data/synthetic/left.avi
     image:
       width: 640
       height: 480
@@ -92,7 +92,7 @@ cameras:
   RIGHT:
     source:
       type: video
-      path: data/synthetic/right.mp4
+      path: data/synthetic/right.avi
     image:
       width: 640
       height: 480
@@ -130,7 +130,7 @@ cameras:
   REAR:
     source:
       type: video
-      path: data/synthetic/rear.mp4
+      path: data/synthetic/rear.avi
     image:
       width: 640
       height: 480
