@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 target/
+out/
 output/
 data/synthetic/
 *.mp4

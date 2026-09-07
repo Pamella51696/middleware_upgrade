@@ -6,10 +6,7 @@ import fisheye270.calibration.CameraModel;
 import fisheye270.calibration.Pose;
 import fisheye270.calibration.Provenance;
 import fisheye270.projection.PanoramaSpec;
-import org.yaml.snakeyaml.Yaml;
-
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -60,52 +57,45 @@ public final class AppConfig {
     public static AppConfig load(Path dir) throws IOException {
         AppConfig cfg = new AppConfig();
         cfg.configDir = dir;
-        Yaml yaml = new Yaml();
-        try (InputStream in = Files.newInputStream(dir.resolve("cameras.yaml"))) {
-            Map<String, Object> root = yaml.load(in);
-            Map<String, Object> out = (Map<String, Object>) root.get("output");
-            if (out != null) {
-                cfg.panorama.fovHDeg = d(out.get("fov_horizontal_deg"), 270);
-                cfg.panorama.fovVDeg = d(out.get("fov_vertical_deg"), 70);
-                cfg.panorama.width = (int) d(out.get("width"), 1920);
-                cfg.panorama.height = (int) d(out.get("height"), 540);
-                cfg.panorama.yawCenterDeg = d(out.get("yaw_center_deg"), 0);
-            }
-            Map<String, Object> cams = (Map<String, Object>) root.get("cameras");
-            for (String id : CAMERA_IDS) {
-                if (cams == null || !cams.containsKey(id)) continue;
-                cfg.cameras.put(id, parseCam(id, (Map<String, Object>) cams.get(id)));
-            }
+        Map<String, Object> root = SimpleYaml.load(dir.resolve("cameras.yaml"));
+        Map<String, Object> out = (Map<String, Object>) root.get("output");
+        if (out != null) {
+            cfg.panorama.fovHDeg = d(out.get("fov_horizontal_deg"), 270);
+            cfg.panorama.fovVDeg = d(out.get("fov_vertical_deg"), 70);
+            cfg.panorama.width = (int) d(out.get("width"), 1920);
+            cfg.panorama.height = (int) d(out.get("height"), 540);
+            cfg.panorama.yawCenterDeg = d(out.get("yaw_center_deg"), 0);
+        }
+        Map<String, Object> cams = (Map<String, Object>) root.get("cameras");
+        for (String id : CAMERA_IDS) {
+            if (cams == null || !cams.containsKey(id)) continue;
+            cfg.cameras.put(id, parseCam(id, (Map<String, Object>) cams.get(id)));
         }
         Path proj = dir.resolve("projection.yaml");
         if (Files.exists(proj)) {
-            try (InputStream in = Files.newInputStream(proj)) {
-                Map<String, Object> p = yaml.load(in);
-                cfg.projectionModel = str(p.get("model"), "cylindrical");
-                cfg.panorama.model = cfg.projectionModel;
-                Map<String, Object> persp = (Map<String, Object>) p.get("perspective");
-                if (persp != null) cfg.perspectiveBalance = d(persp.get("balance"), 0.5);
-            }
+            Map<String, Object> p = SimpleYaml.load(proj);
+            cfg.projectionModel = str(p.get("model"), "cylindrical");
+            cfg.panorama.model = cfg.projectionModel;
+            Map<String, Object> persp = (Map<String, Object>) p.get("perspective");
+            if (persp != null) cfg.perspectiveBalance = d(persp.get("balance"), 0.5);
         }
         Path st = dir.resolve("stitching.yaml");
         if (Files.exists(st)) {
-            try (InputStream in = Files.newInputStream(st)) {
-                Map<String, Object> s = yaml.load(in);
-                Map<String, Object> seam = (Map<String, Object>) s.get("seam");
-                if (seam != null) {
-                    cfg.blendWidthPx = (int) d(seam.get("blend_width_px"), 80);
-                    cfg.seamMode = str(seam.get("mode"), "feather");
-                }
-                Map<String, Object> ph = (Map<String, Object>) s.get("photometric");
-                if (ph != null) {
-                    cfg.photometric = !Boolean.FALSE.equals(ph.get("enabled"));
-                    cfg.photoReference = str(ph.get("reference"), "FRONT");
-                }
-                Map<String, Object> al = (Map<String, Object>) s.get("alignment");
-                if (al != null) {
-                    cfg.orbFeatures = (int) d(al.get("nfeatures"), 2000);
-                    cfg.minInliers = (int) d(al.get("min_inliers"), 25);
-                }
+            Map<String, Object> s = SimpleYaml.load(st);
+            Map<String, Object> seam = (Map<String, Object>) s.get("seam");
+            if (seam != null) {
+                cfg.blendWidthPx = (int) d(seam.get("blend_width_px"), 80);
+                cfg.seamMode = str(seam.get("mode"), "feather");
+            }
+            Map<String, Object> ph = (Map<String, Object>) s.get("photometric");
+            if (ph != null) {
+                cfg.photometric = !Boolean.FALSE.equals(ph.get("enabled"));
+                cfg.photoReference = str(ph.get("reference"), "FRONT");
+            }
+            Map<String, Object> al = (Map<String, Object>) s.get("alignment");
+            if (al != null) {
+                cfg.orbFeatures = (int) d(al.get("nfeatures"), 2000);
+                cfg.minInliers = (int) d(al.get("min_inliers"), 25);
             }
         }
         return cfg;
@@ -165,6 +155,7 @@ public final class AppConfig {
 
     static Double boxed(Object o) {
         if (o == null) return null;
+        if ("null".equalsIgnoreCase(String.valueOf(o))) return null;
         return d(o, 0);
     }
 

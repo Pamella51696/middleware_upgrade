@@ -26,7 +26,7 @@ import java.nio.file.Path;
  */
 public final class App {
     static {
-        nu.pattern.OpenCV.loadLocally();
+        OpenCvNative.load();
     }
 
     public static void main(String[] args) throws Exception {

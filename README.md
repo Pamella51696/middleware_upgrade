@@ -5,8 +5,37 @@ This is an OpenCV **Java** prototype. It does not require a checkerboard,
 vehicle measurements, or factory K/D. The primary output is a **cylindrical
 ~270° see-through strip**, not a bird's-eye view.
 
-Build and run
--------------
+Build and run (Windows, official OpenCV JAR only)
+------------------------------------------------
+
+Do **not** compile only `*.java` inside `src\main\java\fisheye270`. That folder
+is just the top-level package; the rest of the code is in subfolders, and there
+is **no SnakeYAML JAR**. Config is parsed in-process.
+
+From the **repo root** (the folder that contains `config\` and `pom.xml`):
+
+```bat
+set OPENCV_JAR=C:\Users\ps95973\Downloads\opencv\build\java\opencv-490.jar
+set OPENCV_NATIVE=C:\Users\ps95973\Downloads\opencv\build\java\x64
+compile.bat
+
+java -cp "%OPENCV_JAR%;out" -Djava.library.path="%OPENCV_NATIVE%" fisheye270.VideoStreamingServer 9090 front.mov left.mov right.mov rear.mov
+```
+
+Or in PowerShell: `.\compile.ps1`
+
+Equivalent one-liner:
+
+```bat
+dir /s /b src\main\java\*.java > out\sources.txt
+javac -encoding UTF-8 -cp "%OPENCV_JAR%" -d out @out\sources.txt
+```
+
+`javac -cp opencv-490.jar *.java` from `fisheye270\` will fail: missing packages
+and (previously) missing `Yaml`.
+
+Maven (optional)
+----------------
 
 ```bash
 mvn -q test
