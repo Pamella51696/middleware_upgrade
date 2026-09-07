@@ -1,0 +1,166 @@
+# Parameter provenance is required for every geometric value:
+#   KNOWN      — measured from the file/stream (e.g. resolution)
+#   ASSUMED    — reasonable default with no image evidence
+#   ESTIMATED  — derived from resolution, FOV, or overlap
+#   CALIBRATED — from a later checkerboard / factory calibration (Mode B)
+
+output:
+  fov_horizontal_deg: 270          # ESTIMATED target; configurable: 180/220/240/270/360
+  fov_vertical_deg: 70             # ASSUMED
+  width: 1920                      # ASSUMED canvas size
+  height: 540                      # ASSUMED
+  yaw_center_deg: 0                # ASSUMED: panorama centered on FRONT
+  fps: 15
+
+cameras:
+  FRONT:
+    source:
+      type: video                  # video | images | synthetic
+      path: data/synthetic/front.avi
+    image:
+      width: 640                   # KNOWN after first frame (overwritten)
+      height: 480
+    fov_horizontal_deg: 190        # ASSUMED until a datasheet is provided
+    fov_vertical_deg: null         # derived from aspect if null
+    intrinsics:
+      fx: null                     # ESTIMATED from FOV if null
+      fy: null
+      cx: null                     # ASSUMED image center if null
+      cy: null
+      source: estimated            # estimated | calibrated
+    distortion:
+      model: fisheye               # OpenCV Kannala-Brandt (k1..k4)
+      k1: 0.0                      # ESTIMATED (equidistant if all zero)
+      k2: 0.0
+      k3: 0.0
+      k4: 0.0
+      source: estimated
+    pose:
+      yaw_deg: 0.0                 # ASSUMED mounting (vehicle yaw)
+      pitch_deg: 0.0               # ASSUMED
+      roll_deg: 0.0                # ASSUMED
+      tx: 0.0                      # UNKNOWN; zero-parallax approximation
+      ty: 0.0
+      tz: 0.0
+      source: assumed
+    alignment:
+      dx: 0.0                      # ESTIMATED in panorama pixels (offline)
+      dy: 0.0
+      rotation_deg: 0.0
+      scale: 1.0
+      source: estimated
+    enabled: true
+
+  LEFT:
+    source:
+      type: video
+      path: data/synthetic/left.avi
+    image:
+      width: 640
+      height: 480
+    fov_horizontal_deg: 190
+    fov_vertical_deg: null
+    intrinsics:
+      fx: null
+      fy: null
+      cx: null
+      cy: null
+      source: estimated
+    distortion:
+      model: fisheye
+      k1: 0.0
+      k2: 0.0
+      k3: 0.0
+      k4: 0.0
+      source: estimated
+    pose:
+      yaw_deg: -90.0
+      pitch_deg: 0.0
+      roll_deg: 0.0
+      tx: 0.0
+      ty: 0.0
+      tz: 0.0
+      source: assumed
+    alignment:
+      dx: 0.0
+      dy: 0.0
+      rotation_deg: 0.0
+      scale: 1.0
+      source: estimated
+    enabled: true
+
+  RIGHT:
+    source:
+      type: video
+      path: data/synthetic/right.avi
+    image:
+      width: 640
+      height: 480
+    fov_horizontal_deg: 190
+    fov_vertical_deg: null
+    intrinsics:
+      fx: null
+      fy: null
+      cx: null
+      cy: null
+      source: estimated
+    distortion:
+      model: fisheye
+      k1: 0.0
+      k2: 0.0
+      k3: 0.0
+      k4: 0.0
+      source: estimated
+    pose:
+      yaw_deg: 90.0
+      pitch_deg: 0.0
+      roll_deg: 0.0
+      tx: 0.0
+      ty: 0.0
+      tz: 0.0
+      source: assumed
+    alignment:
+      dx: 0.0
+      dy: 0.0
+      rotation_deg: 0.0
+      scale: 1.0
+      source: estimated
+    enabled: true
+
+  REAR:
+    source:
+      type: video
+      path: data/synthetic/rear.avi
+    image:
+      width: 640
+      height: 480
+    fov_horizontal_deg: 190
+    fov_vertical_deg: null
+    intrinsics:
+      fx: null
+      fy: null
+      cx: null
+      cy: null
+      source: estimated
+    distortion:
+      model: fisheye
+      k1: 0.0
+      k2: 0.0
+      k3: 0.0
+      k4: 0.0
+      source: estimated
+    pose:
+      yaw_deg: 180.0
+      pitch_deg: 0.0
+      roll_deg: 0.0
+      tx: 0.0
+      ty: 0.0
+      tz: 0.0
+      source: assumed
+    alignment:
+      dx: 0.0
+      dy: 0.0
+      rotation_deg: 0.0
+      scale: 1.0
+      source: estimated
+    enabled: true
