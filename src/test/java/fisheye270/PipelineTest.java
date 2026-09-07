@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PipelineTest {
     @BeforeAll
     static void loadCv() {
-        nu.pattern.OpenCV.loadLocally();
+        OpenCvNative.load();
     }
 
     @Test
@@ -69,6 +69,16 @@ class PipelineTest {
         org.opencv.core.MatOfDouble std = new org.opencv.core.MatOfDouble();
         org.opencv.core.Core.meanStdDev(r.panorama, mean, std);
         assertTrue(mean.get(0, 0)[0] > 5, "panorama should not be empty");
+    }
+
+    @Test
+    void yamlConfigLoadsWithoutSnakeYaml() throws Exception {
+        var cfg = AppConfig.load(java.nio.file.Path.of("config"));
+        assertEquals(4, cfg.cameras.size());
+        assertEquals(270.0, cfg.panorama.fovHDeg);
+        assertEquals("cylindrical", cfg.projectionModel);
+        assertNotNull(cfg.cameras.get("FRONT").path);
+        assertEquals(-90.0, cfg.cameras.get("LEFT").pose.yawDeg);
     }
 
     @Test
