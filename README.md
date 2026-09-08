@@ -50,6 +50,7 @@ mvn -q exec:java -Dexec.args="serve 9090"
 ```
 
 Then open http://localhost:9090/play (panorama) or http://localhost:9090/ (debug views + sliders).
+`/stitch` is the MJPEG feed for [middleware_final_game](https://github.com/Pamella51696/middleware_final_game). See `docs/MIDDLEWARE_FINAL_GAME.md`.
 
 Original calling convention is still accepted:
 

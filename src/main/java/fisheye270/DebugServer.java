@@ -25,6 +25,7 @@ public final class DebugServer {
 
     public static void start(AppConfig cfg, Processor proc, FrameSynchronizer sync, int port) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
+        // Same URLs as Pamella51696/middleware_final_game (legacy single-file server).
         server.createContext("/", ex -> html(ex, INDEX));
         server.createContext("/play", ex -> html(ex, PLAY));
         server.createContext("/stitch", ex -> stream(ex, proc, sync, "stitch"));
@@ -45,7 +46,14 @@ public final class DebugServer {
         System.out.println("Debug   ->  http://localhost:" + port + "/");
     }
 
+    static void cors(HttpExchange ex) {
+        ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        ex.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+    }
+
     static void html(HttpExchange ex, String html) throws IOException {
+        cors(ex);
         byte[] b = html.getBytes(StandardCharsets.UTF_8);
         ex.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
         ex.sendResponseHeaders(200, b.length);
@@ -55,6 +63,11 @@ public final class DebugServer {
     }
 
     static void stream(HttpExchange ex, Processor proc, FrameSynchronizer sync, String view) throws IOException {
+        cors(ex);
+        if ("OPTIONS".equalsIgnoreCase(ex.getRequestMethod())) {
+            ex.sendResponseHeaders(204, -1);
+            return;
+        }
         if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
             ex.sendResponseHeaders(405, -1);
             return;
@@ -87,6 +100,11 @@ public final class DebugServer {
     }
 
     static void sliders(HttpExchange ex, AppConfig cfg, Processor proc) throws IOException {
+        cors(ex);
+        if ("OPTIONS".equalsIgnoreCase(ex.getRequestMethod())) {
+            ex.sendResponseHeaders(204, -1);
+            return;
+        }
         if ("GET".equalsIgnoreCase(ex.getRequestMethod())) {
             String cam = param(ex, "camera", "FRONT");
             AppConfig.Cam c = cfg.cameras.get(cam);
